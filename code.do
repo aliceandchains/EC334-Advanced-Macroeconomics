@@ -271,6 +271,138 @@ twoway (line michigan_1y_median tq if !missing(michigan_1y_median), lcolor(navy)
 
 graph export "fig_expectations_term_structure.png", replace width(2400)
 
+*******************************************************
+* 3.7 Counterfactual decomposition: holding blocks constant
+* Model estimated pre-2020: pi_core_cpi = a + b*Epi + g*u_gap + so*d_oil + si*pi_import + e
+* Then simulate fitted inflation holding one block constant at its pre-2020 mean
+*******************************************************
+
+* Define cutoff
+local cut = yq(2020,1)
+
+cap drop train3 test3 est3_ok
+gen train3 = (tq < `cut')
+gen test3  = (tq >= `cut')
+
+* Choose expectations measure for this counterfactual exercise
+local expvar spf_inflation_1year
+
+* Ensure a clean common sample
+gen est3_ok = !missing(pi_core_cpi, `expvar', u_gap, d_oil, pi_import)
+
+* Estimate expectations-augmented PC using pre-2020 only
+reg pi_core_cpi `expvar' u_gap d_oil pi_import if train3 & est3_ok, robust
+est store stg3_pc_pre2020
+
+* Store coefficients as scalars (so we can build counterfactual fits safely)
+scalar b0 = _b[_cons]
+scalar bE = _b[`expvar']
+scalar bU = _b[u_gap]
+scalar bO = _b[d_oil]
+scalar bI = _b[pi_import]
+
+* Pre-2020 means (constants)
+quietly summarize `expvar' if train3 & est3_ok
+scalar exp_bar = r(mean)
+
+quietly summarize u_gap if train3 & est3_ok
+scalar ugap_bar = r(mean)
+
+quietly summarize d_oil if train3 & est3_ok
+scalar oil_bar = r(mean)
+
+quietly summarize pi_import if train3 & est3_ok
+scalar imp_bar = r(mean)
+
+* Baseline fitted inflation using actual series
+cap drop pi_hat_base
+gen pi_hat_base = .
+replace pi_hat_base = b0 + bE*`expvar' + bU*u_gap + bO*d_oil + bI*pi_import if est3_ok
+
+* Counterfactual A: hold expectations constant at exp_bar
+cap drop pi_hat_expconst
+gen pi_hat_expconst = .
+replace pi_hat_expconst = b0 + bE*exp_bar + bU*u_gap + bO*d_oil + bI*pi_import if est3_ok
+
+* Counterfactual B: hold slack constant at ugap_bar
+cap drop pi_hat_slackconst
+gen pi_hat_slackconst = .
+replace pi_hat_slackconst = b0 + bE*`expvar' + bU*ugap_bar + bO*d_oil + bI*pi_import if est3_ok
+
+* Counterfactual C: hold supply shocks constant at oil_bar and imp_bar
+cap drop pi_hat_supplyconst
+gen pi_hat_supplyconst = .
+replace pi_hat_supplyconst = b0 + bE*`expvar' + bU*u_gap + bO*oil_bar + bI*imp_bar if est3_ok
+
+
+*******************************************************
+* 3.8 Numerical evaluation (post-2020): RMSE and MAE by counterfactual
+*******************************************************
+
+cap drop fe_base fe_exp fe_slack fe_supply
+gen fe_base  = pi_core_cpi - pi_hat_base if test3 & est3_ok
+gen fe_exp   = pi_core_cpi - pi_hat_expconst if test3 & est3_ok
+gen fe_slack = pi_core_cpi - pi_hat_slackconst if test3 & est3_ok
+gen fe_supply= pi_core_cpi - pi_hat_supplyconst if test3 & est3_ok
+
+cap drop se_base se_exp se_slack se_supply ae_base ae_exp ae_slack ae_supply
+gen se_base  = fe_base^2  if test3 & !missing(fe_base)
+gen se_exp   = fe_exp^2   if test3 & !missing(fe_exp)
+gen se_slack = fe_slack^2 if test3 & !missing(fe_slack)
+gen se_supply= fe_supply^2 if test3 & !missing(fe_supply)
+
+gen ae_base  = abs(fe_base)  if test3 & !missing(fe_base)
+gen ae_exp   = abs(fe_exp)   if test3 & !missing(fe_exp)
+gen ae_slack = abs(fe_slack) if test3 & !missing(fe_slack)
+gen ae_supply= abs(fe_supply) if test3 & !missing(fe_supply)
+
+quietly summarize se_base
+scalar rmse_base = sqrt(r(mean))
+quietly summarize se_exp
+scalar rmse_exp = sqrt(r(mean))
+quietly summarize se_slack
+scalar rmse_slack = sqrt(r(mean))
+quietly summarize se_supply
+scalar rmse_supply = sqrt(r(mean))
+
+quietly summarize ae_base
+scalar mae_base = r(mean)
+quietly summarize ae_exp
+scalar mae_exp = r(mean)
+quietly summarize ae_slack
+scalar mae_slack = r(mean)
+quietly summarize ae_supply
+scalar mae_supply = r(mean)
+
+display "=== Post-2020 forecast performance (Stage 3 counterfactuals) ==="
+display "RMSE baseline (all actual)              = " rmse_base
+display "RMSE hold expectations constant         = " rmse_exp
+display "RMSE hold slack constant                = " rmse_slack
+display "RMSE hold supply shocks constant        = " rmse_supply
+display "MAE  baseline (all actual)              = " mae_base
+display "MAE  hold expectations constant         = " mae_exp
+display "MAE  hold slack constant                = " mae_slack
+display "MAE  hold supply shocks constant        = " mae_supply
+
+display "=== Improvements relative to baseline (lower is better) ==="
+display "RMSE improvement: hold expectations = " (rmse_base - rmse_exp)
+display "RMSE improvement: hold slack        = " (rmse_base - rmse_slack)
+display "RMSE improvement: hold supply       = " (rmse_base - rmse_supply)
+
+
+*******************************************************
+* 3.9 Optional: one diagnostic graph (ONLY export if you want it as a figure)
+* (Given your 5-figure limit, you may prefer NOT to export this.)
+*******************************************************
+
+cap drop pi_hat_base_in pi_hat_base_oos
+gen pi_hat_base_in = pi_hat_base if train3 & est3_ok
+gen pi_hat_base_oos = pi_hat_base if test3 & est3_ok
+
+twoway (line pi_core_cpi tq if est3_ok, lwidth(medthick)) (line pi_hat_base_in tq if !missing(pi_hat_base_in), lwidth(medthick)) (line pi_hat_base_oos tq if !missing(pi_hat_base_oos), lpattern(dash) lwidth(medthick)) (line pi_hat_expconst tq if est3_ok, lpattern(shortdash) lwidth(medthick)) (line pi_hat_supplyconst tq if est3_ok, lpattern(dot) lwidth(medthick)), xline(`cut', lpattern(dash) lcolor(gs8)) legend(order(1 "Actual" 2 "Fit (pre-2020)" 3 "Forecast (post-2020)" 4 "Hold expectations const" 5 "Hold supply const") position(6) ring(0) region(lstyle(none))) ytitle("Annualised quarterly inflation (pp)") xtitle("Quarter") title("Counterfactuals: expectations vs supply (pre-2020 coefficients)") name(fig_stage3_counterfactuals, replace)
+
+* Uncomment ONLY if you want to use this as one of your 5 figures:
+* graph export "fig_stage3_counterfactuals.png", replace width(2400)
 
 
 
@@ -282,6 +414,250 @@ graph export "fig_expectations_term_structure.png", replace width(2400)
 
 
 
+*******************************************************
+* Stage 4 - Expectations: Volcker credibility and anchoring (SPF SR vs SPF LR)
+* Core series:
+*   Short-run expectations: spf_inflation_1year
+*   Long-run expectations:  spf_inflation   (SPF "over one year")
+* NO /// used anywhere
+*******************************************************
 
+* 4.0 Sanity: confirm long-run SPF exists (your file has spf_inflation)
+capture confirm variable spf_inflation
+if _rc!=0 {
+    display "ERROR: spf_inflation not found. Check variable names with: describe spf*"
+    exit 198
+}
+
+label var spf_inflation_1year "SPF expected inflation (1y, SR)"
+label var spf_inflation        "SPF expected inflation (over 1y, LR)"
+
+* 4.1 Define key regime dates (Volcker appointment is 1979Q3; disinflation credibility by mid-80s)
+scalar tq1979q3 = yq(1979,3)
+scalar tq1984q1 = yq(1984,1)
+scalar tq2020q1 = yq(2020,1)
+
+cap drop pre_volcker post_volcker post2020
+gen pre_volcker  = (tq < tq1979q3)
+gen post_volcker = (tq >= tq1984q1)
+gen post2020     = (tq >= tq2020q1)
+
+label var pre_volcker  "Pre-Volcker (before 1979Q3)"
+label var post_volcker "Post-Volcker credibility era (>=1984Q1)"
+label var post2020     "Post-2020 period (>=2020Q1)"
+
+* 4.2 Construct anchoring diagnostics
+* (a) Expectations gap: SR minus LR
+cap drop exp_gap
+gen exp_gap = spf_inflation_1year - spf_inflation
+label var exp_gap "Expectations gap: SPF 1y minus SPF LR (pp)"
+
+* (b) Rolling volatility of LR expectations (anchoring proxy): 5-year rolling SD (20 quarters)
+cap drop lr_sd20
+gen lr_sd20 = .
+forvalues i=20/`=_N' {
+    quietly summarize spf_inflation in `=`i'-19'/`i'
+    replace lr_sd20 = r(sd) in `i'
+}
+label var lr_sd20 "Rolling SD(20q) of SPF LR expectations"
+
+* (c) Rolling volatility of SR expectations (also useful)
+cap drop sr_sd20
+gen sr_sd20 = .
+forvalues i=20/`=_N' {
+    quietly summarize spf_inflation_1year in `=`i'-19'/`i'
+    replace sr_sd20 = r(sd) in `i'
+}
+label var sr_sd20 "Rolling SD(20q) of SPF SR expectations"
+
+* 4.3 Figure: SR vs LR expectations through time (this is your main expectations figure)
+set scheme s2color
+twoway (line spf_inflation_1year tq if !missing(spf_inflation_1year), lwidth(thick) lcolor(forest_green)) (line spf_inflation tq if !missing(spf_inflation), lwidth(thick) lcolor(navy)), legend(order(1 "SPF 1y (short-run)" 2 "SPF over 1y (long-run)") position(6) ring(0) region(lstyle(none))) title("SPF Inflation Expectations: Short-run vs Long-run", size(medsmall)) subtitle("Long-run anchoring after Volcker", size(small)) ytitle("Expected inflation (%)", size(small)) xtitle("Quarter", size(small)) xline(`=tq1979q3', lpattern(dash) lcolor(gs8)) xline(`=tq1984q1', lpattern(dash) lcolor(gs8)) xline(`=tq2020q1', lpattern(dash) lcolor(gs8)) note("Vertical lines: 1979Q3 (Volcker), 1984Q1 (post-disinflation regime), 2020Q1 (COVID).", size(vsmall)) graphregion(color(white)) plotregion(color(white)) name(fig_spf_sr_lr, replace)
+graph export "fig_spf_sr_lr.png", replace width(2400)
+
+* 4.4 Figure: expectations gap (SR - LR). This shows de-anchoring episodes vs re-anchoring.
+twoway (line exp_gap tq if !missing(exp_gap), lwidth(medthick) lcolor(black)), yline(0, lcolor(gs10)) title("Expectations Gap: SR minus LR (SPF)", size(medsmall)) subtitle("Shock episodes widen the gap; anchoring implies mean reversion", size(small)) ytitle("SPF 1y - SPF LR (pp)", size(small)) xtitle("Quarter", size(small)) xline(`=tq1979q3', lpattern(dash) lcolor(gs8)) xline(`=tq1984q1', lpattern(dash) lcolor(gs8)) xline(`=tq2020q1', lpattern(dash) lcolor(gs8)) graphregion(color(white)) plotregion(color(white)) name(fig_exp_gap, replace)
+graph export "fig_exp_gap.png", replace width(2400)
+
+* 4.5 Table-style evidence: mean and volatility before/after Volcker (report in text or as a small table)
+* Means
+quietly summarize spf_inflation if pre_volcker & !missing(spf_inflation)
+display "LR SPF mean pre-Volcker = " r(mean)
+quietly summarize spf_inflation if post_volcker & !missing(spf_inflation)
+display "LR SPF mean post-Volcker = " r(mean)
+
+quietly summarize spf_inflation_1year if pre_volcker & !missing(spf_inflation_1year)
+display "SR SPF mean pre-Volcker = " r(mean)
+quietly summarize spf_inflation_1year if post_volcker & !missing(spf_inflation_1year)
+display "SR SPF mean post-Volcker = " r(mean)
+
+* Volatility (SD)
+quietly summarize spf_inflation if pre_volcker & !missing(spf_inflation)
+display "LR SPF SD pre-Volcker = " r(sd)
+quietly summarize spf_inflation if post_volcker & !missing(spf_inflation)
+display "LR SPF SD post-Volcker = " r(sd)
+
+quietly summarize spf_inflation_1year if pre_volcker & !missing(spf_inflation_1year)
+display "SR SPF SD pre-Volcker = " r(sd)
+quietly summarize spf_inflation_1year if post_volcker & !missing(spf_inflation_1year)
+display "SR SPF SD post-Volcker = " r(sd)
+
+* 4.6 Anchoring test: does LR expectations respond less to current inflation after Volcker?
+* Use lagged 4-quarter inflation from your Stage 3 construction if available; otherwise create quickly here.
+capture confirm variable pi4_corecpi
+if _rc!=0 {
+    cap drop pi4_corecpi
+    gen pi4_corecpi = 100*(ln(cpilfesl) - ln(L4.cpilfesl))
+    label var pi4_corecpi "4-quarter core CPI inflation (%)"
+}
+
+* Regression: LR expectations on lagged inflation, pre vs post
+reg spf_inflation L.pi4_corecpi if pre_volcker & !missing(spf_inflation, L.pi4_corecpi), robust
+est store lr_pre
+
+reg spf_inflation L.pi4_corecpi if post_volcker & !missing(spf_inflation, L.pi4_corecpi), robust
+est store lr_post
+
+est restore lr_pre
+display "LR expectations sensitivity to lagged inflation (pre-Volcker) = " _b[L.pi4_corecpi]
+est restore lr_post
+display "LR expectations sensitivity to lagged inflation (post-Volcker) = " _b[L.pi4_corecpi]
+
+* Optional pooled interaction test (clean evidence in one line)
+cap drop DpostV
+gen DpostV = post_volcker
+reg spf_inflation L.pi4_corecpi c.L.pi4_corecpi#i.DpostV if (pre_volcker | post_volcker) & !missing(spf_inflation, L.pi4_corecpi), robust
+test 1.DpostV#c.L.pi4_corecpi
+
+
+
+
+
+
+
+
+*******************************************************
+* Stage 5 - Expectations-augmented Phillips Curve (lecture-consistent)
+* Goal: estimate NKPC-style regression with ONE expectations proxy at a time,
+*       test stability of k, and compare post-2020 forecast performance
+* NO /// used anywhere
+*******************************************************
+
+local cut = yq(2020,1)
+scalar tq1984q1 = yq(1984,1)
+
+cap drop train5 test5 post84 post20
+gen train5 = (tq < `cut')
+gen test5  = (tq >= `cut')
+gen post84 = (tq >= tq1984q1)
+gen post20 = (tq >= `cut')
+
+label var post84 "Post-1984 dummy"
+label var post20 "Post-2020 dummy"
+
+* Supply controls (as in lectures when discussing cost-push shifts)
+cap drop ok5
+gen ok5 = !missing(pi_core_cpi, u_gap, d_oil, pi_import)
+
+*******************************************************
+* 5.1 SPEC A: Expectations = SPF 1-year (short-run)
+*******************************************************
+
+cap drop okA
+gen okA = ok5 & !missing(spf_inflation_1year)
+
+reg pi_core_cpi spf_inflation_1year u_gap d_oil pi_import if train5 & okA, robust
+est store pc_sr_pre2020
+
+cap drop pi_hat_sr fe_sr se_sr ae_sr
+predict pi_hat_sr if okA, xb
+gen fe_sr = pi_core_cpi - pi_hat_sr if okA
+
+gen se_sr = fe_sr^2 if test5 & !missing(fe_sr)
+gen ae_sr = abs(fe_sr) if test5 & !missing(fe_sr)
+
+quietly summarize se_sr
+scalar rmse_sr = sqrt(r(mean))
+quietly summarize ae_sr
+scalar mae_sr = r(mean)
+
+display "SR-spec post-2020 RMSE = " rmse_sr
+display "SR-spec post-2020 MAE  = " mae_sr
+
+* k stability tests (within pre-2020 sample and at 2020 break)
+reg pi_core_cpi spf_inflation_1year u_gap c.u_gap#i.post84 d_oil pi_import if train5 & okA, robust
+est store pc_sr_k84
+test 1.post84#c.u_gap
+
+reg pi_core_cpi spf_inflation_1year u_gap c.u_gap#i.post20 d_oil pi_import if okA, robust
+est store pc_sr_k20
+test 1.post20#c.u_gap
+
+*******************************************************
+* 5.2 SPEC B: Expectations = SPF over one year (long-run)
+*******************************************************
+
+cap drop okB
+gen okB = ok5 & !missing(spf_inflation)
+
+reg pi_core_cpi spf_inflation u_gap d_oil pi_import if train5 & okB, robust
+est store pc_lr_pre2020
+
+cap drop pi_hat_lr fe_lr se_lr ae_lr
+predict pi_hat_lr if okB, xb
+gen fe_lr = pi_core_cpi - pi_hat_lr if okB
+
+gen se_lr = fe_lr^2 if test5 & !missing(fe_lr)
+gen ae_lr = abs(fe_lr) if test5 & !missing(fe_lr)
+
+quietly summarize se_lr
+scalar rmse_lr = sqrt(r(mean))
+quietly summarize ae_lr
+scalar mae_lr = r(mean)
+
+display "LR-spec post-2020 RMSE = " rmse_lr
+display "LR-spec post-2020 MAE  = " mae_lr
+
+* k stability tests
+reg pi_core_cpi spf_inflation u_gap c.u_gap#i.post84 d_oil pi_import if train5 & okB, robust
+est store pc_lr_k84
+test 1.post84#c.u_gap
+
+reg pi_core_cpi spf_inflation u_gap c.u_gap#i.post20 d_oil pi_import if okB, robust
+est store pc_lr_k20
+test 1.post20#c.u_gap
+
+*******************************************************
+* 5.3 Small results table (RMSE/MAE) exported as CSV
+*******************************************************
+
+preserve
+clear
+set obs 2
+gen spec = ""
+replace spec = "Expectations = SPF 1y (SR)" in 1
+replace spec = "Expectations = SPF over 1y (LR)" in 2
+gen rmse_post2020 = .
+gen mae_post2020  = .
+replace rmse_post2020 = rmse_sr in 1
+replace mae_post2020  = mae_sr  in 1
+replace rmse_post2020 = rmse_lr in 2
+replace mae_post2020  = mae_lr  in 2
+format rmse_post2020 mae_post2020 %9.3f
+list, noobs
+export delimited using "table_stage5_forecast_compare.csv", replace
+restore
+
+*******************************************************
+* 5.4 Optional figure: actual vs forecast (pick ONE spec if you need a figure)
+*******************************************************
+
+cap drop pi_hat_sr_in pi_hat_sr_oos
+gen pi_hat_sr_in  = pi_hat_sr if train5 & okA
+gen pi_hat_sr_oos = pi_hat_sr if test5  & okA
+
+twoway (line pi_core_cpi tq if okA, lwidth(medthick)) (line pi_hat_sr_in tq if !missing(pi_hat_sr_in), lwidth(medthick)) (line pi_hat_sr_oos tq if !missing(pi_hat_sr_oos), lpattern(dash) lwidth(medthick)), xline(`cut', lpattern(dash) lcolor(gs8)) legend(order(1 "Actual" 2 "Fit (pre-2020)" 3 "Forecast (post-2020)") position(6) ring(0) region(lstyle(none))) ytitle("Annualised quarterly inflation (pp)") xtitle("Quarter") title("Expectations-augmented PC (SPF 1y): fit and post-2020 forecast") name(fig_stage5_sr_fit_forecast, replace)
+
+graph export "fig_stage5_sr_fit_forecast.png", replace width(2400)
 
 
