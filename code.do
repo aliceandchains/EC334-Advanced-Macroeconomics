@@ -179,60 +179,109 @@ graph export "robust_s4_cpi_spf_vu_errors.png", replace
 
 
 
+*******************************************************
+* Stage 3 - Stock & Watson style changing PC slope
+* (Full stage: constructs variables + estimates slopes + pretty plot)
+* NO /// used anywhere
+*******************************************************
+
+* Ensure time series is set (Stage 1 should already do this)
+* tsset tq
+
+* 3.1 Construct Stock-Watson style inflation measure
+
+* 4-quarter inflation rate (log change over 4 quarters, percent)
+cap drop pi4_corecpi
+gen pi4_corecpi = 100*(ln(cpilfesl) - ln(L4.cpilfesl))
+label var pi4_corecpi "4-quarter core CPI inflation (%)"
+
+* Backward-looking 4-quarter moving average of 4-quarter inflation
+cap drop ma4_pi4_corecpi
+gen ma4_pi4_corecpi = (pi4_corecpi + L.pi4_corecpi + L2.pi4_corecpi + L3.pi4_corecpi)/4
+label var ma4_pi4_corecpi "MA(4) of 4-quarter inflation"
+
+* Year-over-year change in smoothed inflation (4-quarter difference)
+cap drop d_pi_sw
+gen d_pi_sw = ma4_pi4_corecpi - L4.ma4_pi4_corecpi
+label var d_pi_sw "YoY change in MA(4) inflation (pp)"
+
+* 3.2 Unemployment gap (and MA(4))
+cap drop u_gap ma4_ugap
+gen u_gap = unrate - nrou
+label var u_gap "Unemployment gap (u - u*)"
+
+cap drop ma4_ugap
+gen ma4_ugap = (u_gap + L.u_gap + L2.u_gap + L3.u_gap)/4
+label var ma4_ugap "MA(4) unemployment gap"
+
+* Valid observations (needs lags used in MA and in L4 of MA)
+cap drop sw_ok
+gen sw_ok = !missing(d_pi_sw, ma4_ugap, year)
+
+* 3.3 Define subsamples (aligned to your data start in 1968)
+cap drop period68_83 period84_99 period00_19
+gen period68_83 = (year>=1968 & year<=1983)
+gen period84_99 = (year>=1984 & year<=1999)
+gen period00_19 = (year>=2000 & year<=2019)
+
+* 3.4 Estimate reduced-form slopes ("Phillips correlation") and store
+reg d_pi_sw ma4_ugap if sw_ok & period68_83, robust
+est store s68_83
+
+reg d_pi_sw ma4_ugap if sw_ok & period84_99, robust
+est store s84_99
+
+reg d_pi_sw ma4_ugap if sw_ok & period00_19, robust
+est store s00_19
+
+* Display slopes
+est restore s68_83
+display "Phillips correlation 1968–1983 = " _b[ma4_ugap]
+
+est restore s84_99
+display "Phillips correlation 1984–1999 = " _b[ma4_ugap]
+
+est restore s00_19
+display "Phillips correlation 2000–2019 = " _b[ma4_ugap]
+
+* 3.5 Pretty plot (scatter + fitted lines)
+set scheme s2color
+
+local xmin = -2
+local xmax = 6
+local ymin = -4.5
+local ymax = 6
+
+local plots "(scatter d_pi_sw ma4_ugap if sw_ok & period68_83, msymbol(Oh) msize(medsmall) mcolor(navy) mlcolor(navy) mfcolor(none) mlwidth(medthick))"
+local plots "`plots' (lfit d_pi_sw ma4_ugap if sw_ok & period68_83, lcolor(navy) lwidth(thick) lpattern(dash))"
+local plots "`plots' (scatter d_pi_sw ma4_ugap if sw_ok & period84_99, msymbol(Sh) msize(medsmall) mcolor(forest_green) mlcolor(forest_green) mfcolor(none) mlwidth(medthick))"
+local plots "`plots' (lfit d_pi_sw ma4_ugap if sw_ok & period84_99, lcolor(forest_green) lwidth(thick) lpattern(shortdash))"
+local plots "`plots' (scatter d_pi_sw ma4_ugap if sw_ok & period00_19, msymbol(Dh) msize(medsmall) mcolor(black) mlcolor(black) mfcolor(none) mlwidth(medthick))"
+local plots "`plots' (lfit d_pi_sw ma4_ugap if sw_ok & period00_19, lcolor(black) lwidth(thick) lpattern(solid))"
+
+twoway `plots', legend(order(1 "1968–1983" 3 "1984–1999" 5 "2000–2019") position(3) ring(0) region(lstyle(none))) title("Changing Phillips Correlation (Reduced Form)", size(medsmall)) subtitle("Stock–Watson-style smoothing; subsample fits", size(small)) xtitle("Unemployment gap (MA(4), pp)", size(small)) ytitle("Year-over-year change in inflation (pp)", size(small)) xlabel(`xmin'(2)`xmax', grid) ylabel(`ymin'(2)`ymax', grid) xscale(range(`xmin' `xmax')) yscale(range(`ymin' `ymax')) graphregion(color(white)) plotregion(color(white)) note("Reduced-form accelerationist Phillips Curve (expectations not included). y = 4q change in MA(4) of 4q inflation; x = MA(4) unemployment gap.", size(vsmall)) name(fig_stage3_sw_pc_pretty, replace)
+
+graph export "stage3_stockwatson_phillips_correlation_pretty.png", replace width(2400)
+
+* 3.6 Showing that inflation expectations changed (decreased) over time acorss household, professional and market-based measures
+
+set scheme s2color
+
+twoway (line michigan_1y_median tq if !missing(michigan_1y_median), lcolor(navy) lwidth(thick)) (line spf_inflation_1year tq if !missing(spf_inflation_1year), lcolor(forest_green) lwidth(thick)) (line swap_1year tq if !missing(swap_1year), lcolor(black) lwidth(medthick) lpattern(dash)) (line swap_5year tq if !missing(swap_5year), lcolor(black) lwidth(thick) lpattern(solid)) (line swap_10year tq if !missing(swap_10year), lcolor(black) lwidth(medthick) lpattern(dot)), legend(order(1 "Michigan 1y median (households)" 2 "SPF 1y (professional forecasters)" 3 "1y inflation swap" 4 "5y inflation swap" 5 "10y inflation swap") position(6) ring(0) region(lstyle(none))) title("Inflation Expectations Over Time", size(medsmall)) subtitle("Surveys and market-based term structure", size(small)) ytitle("Expected inflation (%)", size(small)) xtitle("Quarter", size(small)) xline(`=yq(2020,1)', lpattern(dash) lcolor(gs8)) graphregion(color(white)) plotregion(color(white)) note("Market-based expectations reflect risk-neutral pricing. Vertical line marks 2020Q1.", size(vsmall)) name(fig_expectations_term_structure, replace)
+
+graph export "fig_expectations_term_structure.png", replace width(2400)
 
 
 
 
-* Stage 3 – Baseline Phillips Curve with added supply shocks (incorporating oil prices and import prices as well) *
 
 
 
-* Augmented Phillips Curve with supply shocks
-reg pi_core_cpi spf_inflation_1year u_gap d_oil pi_import if !missing(spf_inflation_1year), robust
-
-* Fitted values from augmented Phillips Curve
-predict pi_hat_pc_supply if e(sample)
-
-* Forecast errors
-gen fe_pc_supply = pi_core_cpi - pi_hat_pc_supply if e(sample)
-
-* Graph 3 – redrawing of the graph 1 *
-twoway (line pi_core_cpi tq if e(sample)) (line pi_hat_pc_supply tq if e(sample)), xline(`=q2020q1') legend(order(1 "Actual core CPI inflation" 2 "Phillips Curve fitted (with supply shocks)")) ytitle("Annualised quarterly inflation (pp)") xtitle("Quarter") title("Actual vs fitted inflation: augmented Phillips Curve")
-
-* Graph 4 – redrawing of the graph 2 *
-twoway (line fe_pc_supply tq if e(sample)), xline(`=q2020q1') yline(0) ytitle("Forecast error: actual - fitted (pp)") xtitle("Quarter") title("Phillips Curve forecasting errors (with supply shocks)")
 
 
 
-* Stage 4 – Proving that PC has not changed structurally *
 
 
-* Mehtod 1
-
-gen ugap_post = u_gap*post2020
-reg pi_core_cpi spf_inflation_1year u_gap ugap_post if !missing(spf_inflation_1year), robust
-test ugap_post
-lincom u_gap + ugap_post
-
-* Method 2
-
-reg pi_core_cpi spf_inflation_1year u_gap if tq<yq(2020,1) & !missing(spf_inflation_1year), robust
-est store pre
-reg pi_core_cpi spf_inflation_1year u_gap if tq>=yq(2020,1) & !missing(spf_inflation_1year), robust
-est store post
-
-* Method 3
-
-preserve
-keep if !missing(spf_inflation_1year)
-rolling b_ugap=_b[u_gap] se_ugap=_se[u_gap], window(40) saving(roll_spf, replace): reg pi_core_cpi spf_inflation_1year u_gap
-use roll_spf, clear
-gen tq = _n
-tsset tq
-gen ub = b_ugap + 1.96*se_ugap
-gen lb = b_ugap - 1.96*se_ugap
-twoway (line b_ugap tq) (line ub tq) (line lb tq), yline(0) title("Rolling Phillips Curve slope (u_gap)") xtitle("Rolling window index") ytitle("Slope estimate")
-restore
 
 
 
