@@ -45,6 +45,36 @@ summarize pi_core_cpi pi_core_pce u_gap l_vu spf_inflation_1year michigan_1y_med
 
 
 
+*******************************************************
+* Nice, publication-style graph: start at 1984Q1, legend outside
+*******************************************************
+
+* --- Optional: set a LaTeX-like serif font (pick ONE that exists on your machine)
+* Mac often has "Times" ; Windows often has "Times New Roman"
+capture graph set window fontface "Times"
+capture graph set window fontface "Times New Roman"
+
+* If you export to PDF/EPS for LaTeX, you can also set:
+capture graph set eps fontface "Times"
+capture graph set eps fontface "Times New Roman"
+capture graph set ps  fontface "Times"
+capture graph set ps  fontface "Times New Roman"
+
+* --- Graph: actual + fit + forecast (restricted to >= 1984Q1)
+twoway (line pi_pce tq if ok_hz & tq>=tq1984q1, lcolor(midblue) lwidth(medthick)) (line pi_fit_hz tq if !missing(pi_fit_hz) & tq>=tq1984q1, lcolor(cranberry) lwidth(medthick)) (line pi_fc_hz tq if !missing(pi_fc_hz) & tq>=tq1984q1, lcolor(cranberry) lpattern(dash) lwidth(medthick)), xline(`=tq2020q3', lpattern(dash) lcolor(gs10) lwidth(thin)) title("Out-of-sample forecast for inflation dynamics", size(medium) color(black)) ytitle("Annualised quarterly inflation (pp)", size(small) color(black)) xtitle("") xscale(range(`=tq1984q1' .)) xlabel(`=tq1984q1'(40)`=tq(2024,4)', format(%tqCCYY!Qq) labsize(small) labcolor(black)) ylabel(, labsize(small) labcolor(black) nogrid) legend(order(1 "Actual headline PCE inflation" 2 "Fit (1984Q1–2020Q2)" 3 "Forecast (>=2020Q3)") cols(1) position(6) ring(1) size(small) color(black) region(lstyle(none))) graphregion(color(white)) plotregion(color(white)) name(hz20, replace)
+
+* Export: PNG for quick viewing + PDF for LaTeX
+graph export "fig_hazell_train2020q2_forecast2020q3.png", replace width(2400)
+
+
+
+
+
+
+
+
+
+
 
 
 
