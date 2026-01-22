@@ -1,44 +1,104 @@
-* Stage 1 - understanding the data and preparing for analysis *
+*******************************************************
+* Load data + preprocess once
+*******************************************************
 
 clear all
 set more off
 
 import delimited "alldata.csv", clear varnames(1)
 
-misstable summarize spf_inflation_1year michigan_1y_median swap_1year swap_5year swap_10year cpilfesl pceexcludingfoodandenergy pceall unrate nrou v_u poilbreusdm import_def
-
+* Time index
+cap drop tq
 gen tq = yq(year, quarter)
 format tq %tq
 sort tq
 tsset tq
 
+* Quick missingness audit (optional)
+misstable summarize spf_inflation_1year michigan_1y_median swap_1year swap_5year swap_10year cpilfesl pceexcludingfoodandenergy pceall unrate nrou v_u poilbreusdm import_def
+
+* Inflation measures (annualised q/q)
+cap drop pi_core_cpi pi_core_pce pi_pce
 gen pi_core_cpi = 400*(ln(cpilfesl) - ln(L.cpilfesl))
 gen pi_core_pce = 400*(ln(pceexcludingfoodandenergy) - ln(L.pceexcludingfoodandenergy))
+gen pi_pce      = 400*(ln(pceall) - ln(L.pceall))
 label var pi_core_cpi "Core CPI inflation (annualised q/q, %)"
 label var pi_core_pce "Core PCE inflation (annualised q/q, %)"
+label var pi_pce      "Headline PCE inflation (annualised q/q, %)"
 
+* Slack / tightness measures
+cap drop u_gap l_vu
 gen u_gap = unrate - nrou
+gen l_vu  = ln(v_u)
 label var u_gap "Unemployment gap (u - u*)"
+label var l_vu  "Log tightness ln(v/u)"
 
-gen d_oil = 400*(ln(poilbreusdm) - ln(L.poilbreusdm))
+* Supply / external price terms (annualised q/q)
+cap drop d_oil pi_import
+gen d_oil     = 400*(ln(poilbreusdm) - ln(L.poilbreusdm))
 gen pi_import = 400*(ln(import_def) - ln(L.import_def))
-label var d_oil "Oil price inflation (annualised q/q, %)"
+label var d_oil     "Oil price inflation (annualised q/q, %)"
 label var pi_import "Import price inflation (annualised q/q, %)"
 
+* If you want a post dummy for later sections, keep it; otherwise drop it
+cap drop post2020
 gen post2020 = (tq >= yq(2020,1))
 label var post2020 "Post-2020 dummy"
 
-gen l_vu = ln(v_u)
-label var l_vu "Log tightness ln(v/u)"
+* Summary stats check (optional)
+summarize pi_core_cpi pi_core_pce pi_pce u_gap l_vu spf_inflation_1year michigan_1y_median v_u d_oil pi_import
 
-gen train = (tq <= yq(2019,4))
-gen test  = (tq >= yq(2020,1))
-label var train "Training sample (<=2019Q4)"
-label var test "Test sample (>=2020Q1)"
 
-scalar tq2020q1 = yq(2020,1)
+*******************************************************
+* Baseline expectations-augmented Phillips Curve
+* pi_t = b * E_t pi_{t+1} + g * gap_t + e_t
+* Train: 1984Q1–2020Q2 ; Forecast: 2020Q3 onwards
+*******************************************************
 
-summarize pi_core_cpi pi_core_pce u_gap l_vu spf_inflation_1year michigan_1y_median v_u d_oil pi_import
+* Cutoffs
+scalar tq1984q1 = yq(1984,1)
+scalar tq2020q2 = yq(2020,2)
+scalar tq2020q3 = yq(2020,3)
+
+cap drop train_pc test_pc
+gen train_pc = (tq >= tq1984q1 & tq <= tq2020q2)
+gen test_pc  = (tq >= tq2020q3)
+
+* Common sample for baseline PC
+cap drop ok_pc
+gen ok_pc = !missing(pi_pce, michigan_1y_median, u_gap)
+
+* Estimate baseline PC on training sample
+reg pi_pce michigan_1y_median u_gap if train_pc & ok_pc, robust
+est store baseline_pc_8420q2
+
+* Predicted values (fit + forecast)
+cap drop pi_hat_pc pi_fit_pc pi_fc_pc
+predict pi_hat_pc if ok_pc, xb
+gen pi_fit_pc = pi_hat_pc if train_pc & ok_pc
+gen pi_fc_pc  = pi_hat_pc if test_pc  & ok_pc
+
+* Forecast errors in test window (>=2020Q3)
+cap drop fe_pc se_pc ae_pc
+gen fe_pc = pi_pce - pi_hat_pc if test_pc & ok_pc
+gen se_pc = fe_pc^2 if test_pc & !missing(fe_pc)
+gen ae_pc = abs(fe_pc) if test_pc & !missing(fe_pc)
+
+quietly summarize se_pc
+display "Baseline PC RMSE (forecast from 2020Q3) = " sqrt(r(mean))
+
+quietly summarize ae_pc
+display "Baseline PC MAE  (forecast from 2020Q3) = " r(mean)
+
+* Graph: actual + fit + forecast (final style; no title)
+twoway (line pi_pce tq if ok_pc & tq>=tq1984q1, lcolor(midblue) lwidth(medthick)) (line pi_fit_pc tq if !missing(pi_fit_pc) & tq>=tq1984q1, lcolor(cranberry) lwidth(medthick)) (line pi_fc_pc tq if !missing(pi_fc_pc) & tq>=tq1984q1, lcolor(cranberry) lpattern(dash) lwidth(medthick)), xline(`=tq2020q3', lpattern(dash) lcolor(gs10) lwidth(thin)) ytitle("Annualised quarterly inflation (pp)", size(small) color(black)) xtitle("") xscale(range(`=tq1984q1' .)) xlabel(`=tq1984q1'(40)`=tq(2024,4)', format(%tqCCYY!Qq) labsize(small) labcolor(black)) ylabel(, labsize(small) labcolor(black) glcolor(gs16) glwidth(vthin)) legend(order(1 "Actual headline PCE inflation" 2 "Fit (1984Q1–2020Q2)" 3 "Forecast (>=2020Q3)") cols(1) position(6) ring(1) size(small) color(black) region(lstyle(none))) graphregion(color(white)) plotregion(color(white)) name(pc_base, replace)
+
+graph export "fig_baseline_pc_oos_forecast.pdf", replace
+
+
+
+
+
 
 
 
@@ -126,6 +186,153 @@ graph export "fig_hazell_oos_forecast.pdf", replace
 
 
 
+*******************************************************
+* Robustness checks: Baseline PC with alternative inflation + expectations
+* 2x2: (PCE vs CPI) x (Michigan 1y vs SPF 1y)
+* Train: 1984Q1–2020Q2 ; Forecast: 2020Q3 onwards
+* Output: 2x2 panels + bottom legend (NO extra plotted line)
+* Style: midblue actual, cranberry fit, cranberry dashed forecast, black split line
+* Panel labels: (a) (b) (c) (d) only
+* Adds coefficient text: beta (expectations) and gamma (u_gap)
+*******************************************************
+
+tsset tq
+
+* CPI inflation (using cpilfesl; replace with headline CPI if you have it)
+cap drop pi_cpi
+gen pi_cpi = 400*(ln(cpilfesl) - ln(L.cpilfesl))
+label var pi_cpi "CPI inflation (annualised q/q, %)"
+
+* Cutoffs
+scalar tq1984q1 = yq(1984,1)
+scalar tq2020q2 = yq(2020,2)
+scalar tq2020q3 = yq(2020,3)
+
+cap drop train_pc test_pc
+gen train_pc = (tq >= tq1984q1 & tq <= tq2020q2)
+gen test_pc  = (tq >= tq2020q3)
+
+* X-axis formatting
+local xlbl `=tq1984q1'(40)`=tq(2024,4)'
+local xfmt %tqCCYY!Qq
+
+* Where to print coefficients (x-position)
+scalar tq_text = yq(1996,1)
+
+*******************************************************
+* Helper: compute y-position for coefficient text within each panel
+*******************************************************
+cap program drop _coefpos
+program define _coefpos, rclass
+    syntax varname [if]
+    quietly summarize `varlist' `if', meanonly
+    return scalar ytxt = r(max) - 0.08*(r(max)-r(min))
+end
+
+*******************************************************
+* (a) PCE × Michigan
+*******************************************************
+cap drop ok1 pi_hat1 pi_fit1 pi_fc1
+gen ok1 = !missing(pi_pce, michigan_1y_median, u_gap) & tq>=tq1984q1
+
+reg pi_pce michigan_1y_median u_gap if train_pc & ok1, robust
+est store m1_pce_mich
+local b1 : display %5.2f _b[michigan_1y_median]
+local g1 : display %5.2f _b[u_gap]
+
+predict pi_hat1 if ok1, xb
+gen pi_fit1 = pi_hat1 if train_pc & ok1
+gen pi_fc1  = pi_hat1 if test_pc  & ok1
+
+_coefpos pi_pce if ok1
+scalar ytxt1 = r(ytxt)
+
+twoway (line pi_pce tq if ok1, lcolor(midblue) lwidth(medthick)) (line pi_fit1 tq if !missing(pi_fit1), lcolor(cranberry) lwidth(medthick)) (line pi_fc1 tq if !missing(pi_fc1), lcolor(cranberry) lpattern(dash) lwidth(medthick)), xline(`=tq2020q3', lpattern(dash) lcolor(black) lwidth(thin)) title("(a)", size(small) color(black)) text(`=ytxt1' `=tq_text' "{it:β}=`b1'   {it:γ}=`g1'", size(small) color(black) placement(ne)) ytitle("Annualised quarterly inflation (pp)", size(small) color(black)) xtitle("") xscale(range(`=tq1984q1' .)) xlabel(`xlbl', format(`xfmt') labsize(small) labcolor(black)) ylabel(, labsize(small) labcolor(black) glcolor(gs16) glwidth(vthin)) legend(off) graphregion(color(white)) plotregion(color(white)) name(Ga, replace)
+
+*******************************************************
+* (b) PCE × SPF
+*******************************************************
+cap drop ok2 pi_hat2 pi_fit2 pi_fc2
+gen ok2 = !missing(pi_pce, spf_inflation_1year, u_gap) & tq>=tq1984q1
+
+reg pi_pce spf_inflation_1year u_gap if train_pc & ok2, robust
+est store m2_pce_spf
+local b2 : display %5.2f _b[spf_inflation_1year]
+local g2 : display %5.2f _b[u_gap]
+
+predict pi_hat2 if ok2, xb
+gen pi_fit2 = pi_hat2 if train_pc & ok2
+gen pi_fc2  = pi_hat2 if test_pc  & ok2
+
+_coefpos pi_pce if ok2
+scalar ytxt2 = r(ytxt)
+
+twoway (line pi_pce tq if ok2, lcolor(midblue) lwidth(medthick)) (line pi_fit2 tq if !missing(pi_fit2), lcolor(cranberry) lwidth(medthick)) (line pi_fc2 tq if !missing(pi_fc2), lcolor(cranberry) lpattern(dash) lwidth(medthick)), xline(`=tq2020q3', lpattern(dash) lcolor(black) lwidth(thin)) title("(b)", size(small) color(black)) text(`=ytxt2' `=tq_text' "{it:β}=`b2'   {it:γ}=`g2'", size(small) color(black) placement(ne)) ytitle("", size(small) color(black)) xtitle("") xscale(range(`=tq1984q1' .)) xlabel(`xlbl', format(`xfmt') labsize(small) labcolor(black)) ylabel(, labsize(small) labcolor(black) glcolor(gs16) glwidth(vthin)) legend(off) graphregion(color(white)) plotregion(color(white)) name(Gb, replace)
+
+*******************************************************
+* (c) CPI × Michigan
+*******************************************************
+cap drop ok3 pi_hat3 pi_fit3 pi_fc3
+gen ok3 = !missing(pi_cpi, michigan_1y_median, u_gap) & tq>=tq1984q1
+
+reg pi_cpi michigan_1y_median u_gap if train_pc & ok3, robust
+est store m3_cpi_mich
+local b3 : display %5.2f _b[michigan_1y_median]
+local g3 : display %5.2f _b[u_gap]
+
+predict pi_hat3 if ok3, xb
+gen pi_fit3 = pi_hat3 if train_pc & ok3
+gen pi_fc3  = pi_hat3 if test_pc  & ok3
+
+_coefpos pi_cpi if ok3
+scalar ytxt3 = r(ytxt)
+
+twoway (line pi_cpi tq if ok3, lcolor(midblue) lwidth(medthick)) (line pi_fit3 tq if !missing(pi_fit3), lcolor(cranberry) lwidth(medthick)) (line pi_fc3 tq if !missing(pi_fc3), lcolor(cranberry) lpattern(dash) lwidth(medthick)), xline(`=tq2020q3', lpattern(dash) lcolor(black) lwidth(thin)) title("(c)", size(small) color(black)) text(`=ytxt3' `=tq_text' "{it:β}=`b3'   {it:γ}=`g3'", size(small) color(black) placement(ne)) ytitle("Annualised quarterly inflation (pp)", size(small) color(black)) xtitle("") xscale(range(`=tq1984q1' .)) xlabel(`xlbl', format(`xfmt') labsize(small) labcolor(black)) ylabel(, labsize(small) labcolor(black) glcolor(gs16) glwidth(vthin)) legend(off) graphregion(color(white)) plotregion(color(white)) name(Gc, replace)
+
+*******************************************************
+* (d) CPI × SPF
+*******************************************************
+cap drop ok4 pi_hat4 pi_fit4 pi_fc4
+gen ok4 = !missing(pi_cpi, spf_inflation_1year, u_gap) & tq>=tq1984q1
+
+reg pi_cpi spf_inflation_1year u_gap if train_pc & ok4, robust
+est store m4_cpi_spf
+local b4 : display %5.2f _b[spf_inflation_1year]
+local g4 : display %5.2f _b[u_gap]
+
+predict pi_hat4 if ok4, xb
+gen pi_fit4 = pi_hat4 if train_pc & ok4
+gen pi_fc4  = pi_hat4 if test_pc  & ok4
+
+_coefpos pi_cpi if ok4
+scalar ytxt4 = r(ytxt)
+
+twoway (line pi_cpi tq if ok4, lcolor(midblue) lwidth(medthick)) (line pi_fit4 tq if !missing(pi_fit4), lcolor(cranberry) lwidth(medthick)) (line pi_fc4 tq if !missing(pi_fc4), lcolor(cranberry) lpattern(dash) lwidth(medthick)), xline(`=tq2020q3', lpattern(dash) lcolor(black) lwidth(thin)) title("(d)", size(small) color(black)) text(`=ytxt4' `=tq_text' "{it:β}=`b4'   {it:γ}=`g4'", size(small) color(black) placement(ne)) ytitle("", size(small) color(black)) xtitle("") xscale(range(`=tq1984q1' .)) xlabel(`xlbl', format(`xfmt') labsize(small) labcolor(black)) ylabel(, labsize(small) labcolor(black) glcolor(gs16) glwidth(vthin)) legend(off) graphregion(color(white)) plotregion(color(white)) name(Gd, replace)
+
+*******************************************************
+* Build 2x2 panel figure
+*******************************************************
+graph combine Ga Gb Gc Gd, cols(2) imargin(2 2 2 2) graphregion(color(white)) name(Panels, replace)
+
+*******************************************************
+* Combine 4 panels and place the legend at the very bottom
+*******************************************************
+graph combine Ga Gb Gc Gd, cols(2) imargin(2 2 2 2) graphregion(color(white) margin(b+16)) name(fig_baseline_pc_robust_final, replace)
+
+graph export "fig_baseline_pc_robust_final.pdf", replace
+graph export "fig_baseline_pc_robust_final.png", replace width(3200)
+
+graph combine Panels Leg, cols(1) imargin(0 0 0 0) graphregion(color(white)) name(fig_baseline_pc_robust_final, replace)
+
+graph export "fig_baseline_pc_robust_final.pdf", replace
+graph export "fig_baseline_pc_robust_final.png", replace width(3200)
+
+*******************************************************
+* Table of estimates (LaTeX)
+*******************************************************
+cap which esttab
+if _rc ssc install estout
+esttab m1_pce_mich m2_pce_spf m3_cpi_mich m4_cpi_spf using "tab_baseline_pc_robust.tex", replace se b(%9.3f) se(%9.3f) star(* 0.10 ** 0.05 *** 0.01) label stats(N r2, labels("Observations" "R-squared")) compress
 
 
 
