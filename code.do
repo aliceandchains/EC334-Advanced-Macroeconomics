@@ -42,29 +42,84 @@ summarize pi_core_cpi pi_core_pce u_gap l_vu spf_inflation_1year michigan_1y_med
 
 
 
-
-
-
 *******************************************************
-* Nice, publication-style graph: start at 1984Q1, legend outside
+* Hazell-style Phillips Curve
+* Train: 1984Q1–2020Q2
+* Forecast: 2020Q3 onwards
 *******************************************************
 
-* --- Optional: set a LaTeX-like serif font (pick ONE that exists on your machine)
-* Mac often has "Times" ; Windows often has "Times New Roman"
-capture graph set window fontface "Times"
-capture graph set window fontface "Times New Roman"
+* ----------------------------
+* Time cutoffs
+* ----------------------------
+scalar tq1984q1 = yq(1984,1)
+scalar tq2020q2 = yq(2020,2)
+scalar tq2020q3 = yq(2020,3)
 
-* If you export to PDF/EPS for LaTeX, you can also set:
-capture graph set eps fontface "Times"
-capture graph set eps fontface "Times New Roman"
-capture graph set ps  fontface "Times"
-capture graph set ps  fontface "Times New Roman"
+cap drop train_hz test_hz
+gen train_hz = (tq >= tq1984q1 & tq <= tq2020q2)
+gen test_hz  = (tq >= tq2020q3)
 
-* --- Graph: actual + fit + forecast (restricted to >= 1984Q1)
-twoway (line pi_pce tq if ok_hz & tq>=tq1984q1, lcolor(midblue) lwidth(medthick)) (line pi_fit_hz tq if !missing(pi_fit_hz) & tq>=tq1984q1, lcolor(cranberry) lwidth(medthick)) (line pi_fc_hz tq if !missing(pi_fc_hz) & tq>=tq1984q1, lcolor(cranberry) lpattern(dash) lwidth(medthick)), xline(`=tq2020q3', lpattern(dash) lcolor(gs10) lwidth(thin)) title("Out-of-sample forecast for inflation dynamics", size(medium) color(black)) ytitle("Annualised quarterly inflation (pp)", size(small) color(black)) xtitle("") xscale(range(`=tq1984q1' .)) xlabel(`=tq1984q1'(40)`=tq(2024,4)', format(%tqCCYY!Qq) labsize(small) labcolor(black)) ylabel(, labsize(small) labcolor(black) nogrid) legend(order(1 "Actual headline PCE inflation" 2 "Fit (1984Q1–2020Q2)" 3 "Forecast (>=2020Q3)") cols(1) position(6) ring(1) size(small) color(black) region(lstyle(none))) graphregion(color(white)) plotregion(color(white)) name(hz20, replace)
+* ----------------------------
+* Headline PCE inflation (annualised q/q)
+* ----------------------------
+cap drop pi_pce
+gen pi_pce = 400*(ln(pceall) - ln(L.pceall))
+label var pi_pce "Headline PCE inflation (annualised q/q, %)"
 
-* Export: PNG for quick viewing + PDF for LaTeX
-graph export "fig_hazell_train2020q2_forecast2020q3.png", replace width(2400)
+* ----------------------------
+* Energy inflation (PCE if available, oil proxy otherwise)
+* ----------------------------
+cap drop pi_energy
+capture confirm variable pce_energy
+if _rc==0 {
+    gen pi_energy = 400*(ln(pce_energy) - ln(L.pce_energy))
+    label var pi_energy "PCE energy inflation (annualised q/q, %)"
+}
+else {
+    gen pi_energy = 400*(ln(poilbreusdm) - ln(L.poilbreusdm))
+    label var pi_energy "Oil price inflation proxy (annualised q/q, %)"
+}
+
+* ----------------------------
+* Common sample
+* ----------------------------
+cap drop ok_hz
+gen ok_hz = !missing(pi_pce, michigan_1y_median, u_gap, pi_energy)
+
+* ----------------------------
+* Estimate Phillips Curve (Hazell et al. style)
+* ----------------------------
+reg pi_pce michigan_1y_median u_gap pi_energy if train_hz & ok_hz, robust
+est store hazell_8420q2
+
+* ----------------------------
+* Fitted values and forecasts
+* ----------------------------
+cap drop pi_hat_hz pi_fit_hz pi_fc_hz
+predict pi_hat_hz if ok_hz, xb
+gen pi_fit_hz = pi_hat_hz if train_hz & ok_hz
+gen pi_fc_hz  = pi_hat_hz if test_hz  & ok_hz
+
+* ----------------------------
+* Forecast accuracy (out-of-sample)
+* ----------------------------
+cap drop fe_hz se_hz ae_hz
+gen fe_hz = pi_pce - pi_hat_hz if test_hz & ok_hz
+gen se_hz = fe_hz^2 if test_hz & !missing(fe_hz)
+gen ae_hz = abs(fe_hz) if test_hz & !missing(fe_hz)
+
+quietly summarize se_hz
+display "RMSE (forecast from 2020Q3) = " sqrt(r(mean))
+
+quietly summarize ae_hz
+display "MAE  (forecast from 2020Q3) = " r(mean)
+
+* ----------------------------
+* Final dissertation-quality graph
+* ----------------------------
+twoway (line pi_pce tq if ok_hz & tq>=tq1984q1, lcolor(midblue) lwidth(medthick)) (line pi_fit_hz tq if !missing(pi_fit_hz) & tq>=tq1984q1, lcolor(cranberry) lwidth(medthick)) (line pi_fc_hz tq if !missing(pi_fc_hz) & tq>=tq1984q1, lcolor(cranberry) lpattern(dash) lwidth(medthick)), xline(`=tq2020q3', lpattern(dash) lcolor(gs10) lwidth(thin)) ytitle("Annualised quarterly inflation (pp)", size(small) color(black)) xtitle("") xscale(range(`=tq1984q1' .)) xlabel(`=tq1984q1'(40)`=tq(2024,4)', format(%tqCCYY!Qq) labsize(small) labcolor(black)) ylabel(, labsize(small) labcolor(black) glcolor(gs16) glwidth(vthin)) legend(order(1 "Actual headline PCE inflation" 2 "Fit (1984Q1–2020Q2)" 3 "Forecast (>=2020Q3)") cols(1) position(6) ring(1) size(small) color(black) region(lstyle(none))) graphregion(color(white)) plotregion(color(white)) name(hz20, replace)
+
+graph export "fig_hazell_oos_forecast.pdf", replace
 
 
 
