@@ -514,9 +514,117 @@ graph export "fig_sw_pc_clean_3subs_2019q4.png", replace width(3200)
 
 
 
+*******************************************************
+* Counterfactual analysis (Beaudry-style accounting)
+* Baseline PC: pi_t = a + b*Exp_t + g*u_gap_t + d*d_oil_t + e_t
+* Train: 1984Q1–2020Q2 ; Counterfactual paths plotted through 2023Q4
+* Counterfactuals: hold each regressor at its pre-2020 mean
+*******************************************************
 
+clear all
+set more off
 
+import delimited "alldata.csv", clear varnames(1)
 
+cap drop tq
+gen tq = yq(year, quarter)
+format tq %tq
+sort tq
+tsset tq
+
+*******************************************************
+* Build variables
+*******************************************************
+
+cap drop pi_pce u_gap d_oil
+gen pi_pce = 400*(ln(pceall) - ln(L.pceall))
+label var pi_pce "Headline PCE inflation (annualised q/q)"
+
+gen u_gap = unrate - nrou
+label var u_gap "Unemployment gap"
+
+gen d_oil = 400*(ln(poilbreusdm) - ln(L.poilbreusdm))
+label var d_oil "Oil price inflation"
+
+*******************************************************
+* Sample cutoffs
+*******************************************************
+
+scalar tq1984q1 = yq(1984,1)
+scalar tq2020q2 = yq(2020,2)
+scalar tq2020q1 = yq(2020,1)
+scalar tq2023q4 = yq(2023,4)
+
+cap drop train_pc plot_win ok_pc
+gen train_pc = (tq >= tq1984q1 & tq <= tq2020q2)
+gen plot_win = (tq >= tq1984q1 & tq <= tq2023q4)
+gen ok_pc = !missing(pi_pce, michigan_1y_median, u_gap, d_oil) & plot_win
+
+*******************************************************
+* Pre-2020 means
+*******************************************************
+
+quietly summarize u_gap if ok_pc & tq < tq2020q1, meanonly
+scalar ugap_bar = r(mean)
+
+quietly summarize michigan_1y_median if ok_pc & tq < tq2020q1, meanonly
+scalar exp_bar = r(mean)
+
+quietly summarize d_oil if ok_pc & tq < tq2020q1, meanonly
+scalar oil_bar = r(mean)
+
+*******************************************************
+* Baseline Phillips Curve
+*******************************************************
+
+reg pi_pce michigan_1y_median u_gap d_oil if ok_pc & train_pc, robust
+
+scalar b0 = _b[_cons]
+scalar bE = _b[michigan_1y_median]
+scalar bU = _b[u_gap]
+scalar bO = _b[d_oil]
+
+*******************************************************
+* Fitted and counterfactual paths
+*******************************************************
+
+cap drop pi_hat_full pi_hat_gapfix pi_hat_expfixed pi_hat_oilfixed
+gen pi_hat_full = b0 + bE*michigan_1y_median + bU*u_gap + bO*d_oil if ok_pc
+gen pi_hat_gapfix = b0 + bE*michigan_1y_median + bU*ugap_bar + bO*d_oil if ok_pc
+gen pi_hat_expfixed = b0 + bE*exp_bar + bU*u_gap + bO*d_oil if ok_pc
+gen pi_hat_oilfixed = b0 + bE*michigan_1y_median + bU*u_gap + bO*oil_bar if ok_pc
+
+*******************************************************
+* Common plot settings
+*******************************************************
+
+local yttl "Annualised quarterly inflation (pp)"
+local xlbl `=tq1984q1'(40)`=tq2023q4'
+local xfmt %tqCCYY!Qq
+
+*******************************************************
+* (1) Gap fixed at pre-2020 mean
+*******************************************************
+
+twoway (line pi_pce tq if ok_pc, lcolor(midblue) lwidth(medthick)) (line pi_hat_full tq if ok_pc, lcolor(cranberry) lwidth(medthick)) (line pi_hat_gapfix tq if ok_pc, lcolor(cranberry) lpattern(dash) lwidth(medthick)), xline(`=tq2020q1', lpattern(dash) lcolor(gs10)) ytitle("`yttl'") xtitle("") xlabel(`xlbl', format(`xfmt')) legend(order(1 "Actual inflation" 2 "Predicted (full PC)" 3 "Gap fixed") cols(1)) graphregion(color(white)) plotregion(color(white))
+
+graph export "fig_cf_gap_fixed.png", replace width(3200)
+
+*******************************************************
+* (2) Expectations fixed at pre-2020 mean
+*******************************************************
+
+twoway (line pi_pce tq if ok_pc, lcolor(midblue) lwidth(medthick)) (line pi_hat_full tq if ok_pc, lcolor(cranberry) lwidth(medthick)) (line pi_hat_expfixed tq if ok_pc, lcolor(cranberry) lpattern(dash) lwidth(medthick)), xline(`=tq2020q1', lpattern(dash) lcolor(gs10)) ytitle("") xtitle("") xlabel(`xlbl', format(`xfmt')) legend(order(1 "Actual inflation" 2 "Predicted (full PC)" 3 "Expectations fixed") cols(1)) graphregion(color(white)) plotregion(color(white))
+
+graph export "fig_cf_exp_fixed.png", replace width(3200)
+
+*******************************************************
+* (3) Oil fixed at pre-2020 mean
+*******************************************************
+
+twoway (line pi_pce tq if ok_pc, lcolor(midblue) lwidth(medthick)) (line pi_hat_full tq if ok_pc, lcolor(cranberry) lwidth(medthick)) (line pi_hat_oilfixed tq if ok_pc, lcolor(cranberry) lpattern(dash) lwidth(medthick)), xline(`=tq2020q1', lpattern(dash) lcolor(gs10)) ytitle("`yttl'") xtitle("") xlabel(`xlbl', format(`xfmt')) legend(order(1 "Actual inflation" 2 "Predicted (full PC)" 3 "Oil fixed") cols(1)) graphregion(color(white)) plotregion(color(white))
+
+graph export "fig_cf_oil_fixed.png", replace width(3200)
 
 
 
