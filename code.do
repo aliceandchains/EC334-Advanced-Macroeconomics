@@ -296,114 +296,100 @@ local g4 : display %5.2f _b[u_gap]
 
 
 *******************************************************
-* VAR analysis: inflation, expectations, slack, supply
-* Uses your existing dataset + pre-processing style
-* Output: VAR results + IRFs + FEVD (variance decomp)
+* FEVD (VAR): inflation, expectations, slack, supply
+* Output: 3 separate FEVD PNGs
+* MAX compatibility version: no ///, no plotopts(), no saving()
 *******************************************************
 
 clear all
 set more off
 
-* --------- Load data ----------
+* Global look
+set scheme s2color
+graph set window fontface "Helvetica"
+
+local tsize medsmall
+local lsize small
+local nsize vsmall
+local WPNG  3200
+
 import delimited "alldata.csv", clear varnames(1)
 
+cap drop tq
 gen tq = yq(year, quarter)
 format tq %tq
 sort tq
 tsset tq
 
-* --------- Core variables (same definitions you used) ----------
-cap drop pi_pce pi_cpi u_gap d_oil pi_import
+cap drop pi_pce u_gap d_oil
 gen pi_pce = 400*(ln(pceall) - ln(L.pceall))
-gen pi_cpi = 400*(ln(cpilfesl) - ln(L.cpilfesl))
+gen u_gap  = unrate - nrou
+gen d_oil  = 400*(ln(poilbreusdm) - ln(L.poilbreusdm))
 
-gen u_gap = unrate - nrou
+label var pi_pce "Headline PCE inflation (annualised q/q)"
+label var u_gap  "Unemployment gap (u-u*)"
+label var d_oil  "Oil price inflation (annualised q/q)"
 
-gen d_oil    = 400*(ln(poilbreusdm) - ln(L.poilbreusdm))
-gen pi_import = 400*(ln(import_def) - ln(L.import_def))
-
-label var pi_pce    "Headline PCE inflation (annualised q/q)"
-label var pi_cpi    "Core CPI inflation (annualised q/q)"
-label var u_gap     "Unemployment gap (u-u*)"
-label var d_oil     "Oil price inflation (annualised q/q)"
-label var pi_import "Import price inflation (annualised q/q)"
-
-* --------- Choose ONE expectations series for VAR ----------
-* Option A: Michigan (households)
 local expvar michigan_1y_median
+label var `expvar' "1y-ahead inflation expectations (Michigan median)"
 
-* Option B: SPF (professionals) -> comment out A and uncomment B if you want
-* local expvar spf_inflation_1year
-
-label var `expvar' "1y-ahead inflation expectations"
-
-* --------- Sample window ----------
-* Keep your baseline training-style window; VAR needs contiguous sample
 scalar tq1984q1 = yq(1984,1)
-scalar tq2024q4 = yq(2024,4)
+scalar tq2023q4 = yq(2023,4)
 
 cap drop ok_var
-gen ok_var = (tq>=tq1984q1 & tq<=tq2024q4) & !missing(pi_pce, `expvar', u_gap, d_oil)
+gen ok_var = (tq>=tq1984q1 & tq<=tq2023q4) & !missing(pi_pce, `expvar', u_gap, d_oil)
 
-* If you want to use import prices instead of oil, swap d_oil -> pi_import in the var below.
-
-* --------- Lag selection ----------
-* Start with up to 4 lags (quarterly). You can change maxlags(8) if you want.
-varsoc pi_pce `expvar' u_gap d_oil if ok_var, maxlags(8)
-
-* --------- Estimate VAR ----------
-* Pick a lag length. Common choice for quarterly VARs is 4.
-* If varsoc clearly prefers another lag (AIC/BIC), change lags().
+* VAR
 var pi_pce `expvar' u_gap d_oil if ok_var, lags(1/4)
-
-* --------- Stability check ----------
 varstable
 
-* --------- Impulse responses (IRFs) ----------
-* Cholesky ordering matters. This ordering says:
-* supply (d_oil) can move contemporaneously first, then expectations,
-* then slack, then inflation.
-*
-* If you want inflation ordered first (very different interpretation), change order().
+* IRF horizon set here
 irf set irf_pc_var, replace
-irf create base, step(16) set(irf_pc_var) replace order(d_oil `expvar' u_gap pi_pce)
-
-* Plot key IRFs: response of inflation to each shock
-irf graph oirf, impulse(d_oil) response(pi_pce) byopts(yrescale) name(oirf1, replace)
-irf graph oirf, impulse(`expvar') response(pi_pce) byopts(yrescale) name(oirf2, replace)
-irf graph oirf, impulse(u_gap) response(pi_pce) byopts(yrescale) name(oirf3, replace)
-
-* If you want them in one figure:
-graph combine oirf1 oirf2 oirf3, cols(1) graphregion(color(white)) name(oirf_all, replace)
-
-* --------- Forecast error variance decomposition (FEVD) ----------
-* How much of inflation variance is explained by each shock?
-irf graph fevd, impulse(d_oil `expvar' u_gap pi_pce) response(pi_pce) step(16) ///
-    graphregion(color(white)) name(fevd_pi, replace)
-
-* --------- (Optional) Repeat with CPI inflation ----------
-* Uncomment to run the exact same VAR with CPI instead of PCE:
-*
-* varsoc pi_cpi `expvar' u_gap d_oil if ok_var, maxlags(8)
-* var pi_cpi `expvar' u_gap d_oil if ok_var, lags(1/4)
-* irf set irf_pc_var_cpi, replace
-* irf create base_cpi, step(16) set(irf_pc_var_cpi) replace order(d_oil `expvar' u_gap pi_cpi)
-* irf graph oirf, impulse(`expvar') response(pi_cpi) byopts(yrescale) name(oirf_cpi, replace)
-* irf graph fevd, impulse(d_oil `expvar' u_gap pi_cpi) response(pi_cpi) step(16) ///
-*     graphregion(color(white)) name(fevd_cpi, replace)
+irf create base, step(16) replace order(d_oil `expvar' u_gap pi_pce)
 
 *******************************************************
-* What to look at in the output:
-* 1) varsoc: does AIC/BIC like 4 lags?
-* 2) varstable: all eigenvalues inside unit circle (stable)
-* 3) IRF(pi_pce <- exp shock): positive + persistent? (expectations matter)
-* 4) IRF(pi_pce <- oil shock): positive? (supply shock channel)
-* 5) IRF(pi_pce <- u_gap shock): negative? (slack still restrains inflation)
-* 6) FEVD: post-2020 story often shows big role for supply/expectations
+* CLEAN FEVD PLOTS (manual twoway from irf table output)
+* No ///, no plotopts(), no saving()
 *******************************************************
 
+* Aesthetics you can reuse
+set scheme s2color
+graph set window fontface "Helvetica"
+local tsize medsmall
+local lsize small
+local nsize vsmall
+local WPNG  3200
 
+local TWBASE graphregion(color(white)) plotregion(color(white)) legend(off) ylabel(0(.02).10, angle(horizontal) labsize(`lsize') nogrid) xlabel(0(4)16, labsize(`lsize')) xtitle("Horizon (quarters)", size(`lsize')) ytitle("Share of FE variance", size(`lsize')) title(, size(`tsize')) note(, size(`nsize')) graphregion(margin(6 6 6 6)) plotregion(margin(4 4 2 2))
 
+* Helper: build dataset from matrix returned by irf table
+cap program drop fevd_make
+program define fevd_make
+    args impulsevar respvar outname col
+    preserve
+    tempname M
+    quietly irf table fevd, impulse(`impulsevar') response(`respvar')
+    matrix `M' = r(table)
+    clear
+    svmat double `M', names(col)
+    gen h = _n-1
+    * The FEVD series is typically in the first column of r(table) for old irf table fevd.
+    * We robustify by taking the first numeric column produced by svmat.
+    ds, has(type numeric)
+    local numvars `r(varlist)'
+    local first : word 1 of `numvars'
+    gen share = `first'
+    keep h share
+    order h share
+    twoway line share h, lcolor(`col') lwidth(medthick) `TWBASE' title("FEVD of headline PCE inflation: `outname'", size(`tsize')) note("VAR(4), sample 1984Q1–2023Q4. Cholesky order: d_oil, exp, u_gap, pi_pce.", size(`nsize'))
+    graph export "fig_fevd_`outname'_pi_pce.png", replace width(`WPNG')
+    restore
+end
+
+* Make the three clean plots
+fevd_make d_oil  pi_pce supply_oil  blue
+fevd_make `expvar' pi_pce expectations red
+fevd_make u_gap  pi_pce ugap        black
 
 
 
