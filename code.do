@@ -211,6 +211,53 @@ graph export "fig_fevd_expectations_pi_pce.png", replace width(`WPNG')
 irf graph fevd, irf(base) impulse(u_gap) response(pi_pce) level(95) legend(off) graphregion(color(white)) plotregion(color(white)) ytitle("Share of FE variance", size(`lsize')) xtitle("Horizon (quarters)", size(`lsize')) xlabel(0(4)16, labsize(`lsize')) ylabel(, labsize(`lsize') glcolor(gs16) glwidth(vthin)) title("FEVD of headline PCE inflation: unemployment gap", size(`tsize')) subtitle("") note("") caption("") name(fig_fevd_ugap, replace)
 graph export "fig_fevd_ugap_pi_pce.png", replace width(`WPNG')
 
+*******************************************************
+* 5.5) Counterfactual analysis (Beaudry-style accounting)
+* Baseline PC: pi_t = a + b*Exp_t + g*u_gap_t + d*d_oil_t + e_t
+* Train: 1984Q1–2020Q2 ; Counterfactual paths plotted through 2023Q4
+* Counterfactuals: hold each regressor at its pre-2020 mean
+*******************************************************
+
+cap drop ok_cf
+gen ok_cf = !missing(pi_pce, michigan_1y_median, u_gap, d_oil) & inrange(tq, tq1984q1, tq2023q4)
+
+quietly summarize u_gap if ok_cf & tq < tq2020q1, meanonly
+scalar ugap_bar = r(mean)
+
+quietly summarize michigan_1y_median if ok_cf & tq < tq2020q1, meanonly
+scalar exp_bar = r(mean)
+
+quietly summarize d_oil if ok_cf & tq < tq2020q1, meanonly
+scalar oil_bar = r(mean)
+
+reg pi_pce michigan_1y_median u_gap d_oil if ok_cf & train_pc, robust
+
+scalar b0_cf = _b[_cons]
+scalar bE_cf = _b[michigan_1y_median]
+scalar bU_cf = _b[u_gap]
+scalar bO_cf = _b[d_oil]
+
+cap drop pi_hat_full_cf pi_hat_gapfix_cf pi_hat_expfixed_cf pi_hat_oilfixed_cf
+gen pi_hat_full_cf = b0_cf + bE_cf*michigan_1y_median + bU_cf*u_gap + bO_cf*d_oil if ok_cf
+gen pi_hat_gapfix_cf = b0_cf + bE_cf*michigan_1y_median + bU_cf*ugap_bar + bO_cf*d_oil if ok_cf
+gen pi_hat_expfixed_cf = b0_cf + bE_cf*exp_bar + bU_cf*u_gap + bO_cf*d_oil if ok_cf
+gen pi_hat_oilfixed_cf = b0_cf + bE_cf*michigan_1y_median + bU_cf*u_gap + bO_cf*oil_bar if ok_cf
+
+local yttl_cf "Annualised quarterly inflation (pp)"
+local xlbl_cf `=tq1984q1'(40)`=tq2023q4'
+local xfmt_cf %tqCCYY!Qq
+
+twoway (line pi_pce tq if ok_cf, lcolor(midblue) lwidth(medthick)) (line pi_hat_full_cf tq if ok_cf, lcolor(cranberry) lwidth(medthick)) (line pi_hat_gapfix_cf tq if ok_cf, lcolor(cranberry) lpattern(dash) lwidth(medthick)), xline(`=tq2020q1', lpattern(dash) lcolor(black) lwidth(thin)) ytitle("`yttl_cf'") xtitle("") xlabel(`xlbl_cf', format(`xfmt_cf') nogrid) ylabel(, nogrid) legend(order(1 "Actual inflation" 2 "Predicted (full PC)" 3 "Gap fixed") cols(1)) graphregion(color(white)) plotregion(color(white)) name(fig_cf_gap_fixed, replace)
+graph export "fig_cf_gap_fixed.png", replace width(`WPNG')
+graph export "fig_cf_gap_fixed.pdf", replace
+
+twoway (line pi_pce tq if ok_cf, lcolor(midblue) lwidth(medthick)) (line pi_hat_full_cf tq if ok_cf, lcolor(cranberry) lwidth(medthick)) (line pi_hat_expfixed_cf tq if ok_cf, lcolor(cranberry) lpattern(dash) lwidth(medthick)), xline(`=tq2020q1', lpattern(dash) lcolor(black) lwidth(thin)) ytitle("") xtitle("") xlabel(`xlbl_cf', format(`xfmt_cf') nogrid) ylabel(, nogrid) legend(order(1 "Actual inflation" 2 "Predicted (full PC)" 3 "Expectations fixed") cols(1)) graphregion(color(white)) plotregion(color(white)) name(fig_cf_exp_fixed, replace)
+graph export "fig_cf_exp_fixed.png", replace width(`WPNG')
+graph export "fig_cf_exp_fixed.pdf", replace
+
+twoway (line pi_pce tq if ok_cf, lcolor(midblue) lwidth(medthick)) (line pi_hat_full_cf tq if ok_cf, lcolor(cranberry) lwidth(medthick)) (line pi_hat_oilfixed_cf tq if ok_cf, lcolor(cranberry) lpattern(dash) lwidth(medthick)), xline(`=tq2020q1', lpattern(dash) lcolor(black) lwidth(thin)) ytitle("`yttl_cf'") xtitle("") xlabel(`xlbl_cf', format(`xfmt_cf') nogrid) ylabel(, nogrid) legend(order(1 "Actual inflation" 2 "Predicted (full PC)" 3 "Oil fixed") cols(1)) graphregion(color(white)) plotregion(color(white)) name(fig_cf_oil_fixed, replace)
+graph export "fig_cf_oil_fixed.png", replace width(`WPNG')
+graph export "fig_cf_oil_fixed.pdf", replace
 
 *******************************************************
 * 6) Stock–Watson accelerationist PC (three subsamples)
@@ -249,8 +296,6 @@ twoway (scatter d_pi_pce u_gap if ok_plot & s1, mcolor(gs12) msymbol(Oh) msize(m
 
 graph export "fig_sw_pc_clean_3subs_2019q4.pdf", replace
 graph export "fig_sw_pc_clean_3subs_2019q4.png", replace width(`WPNG')
-
-
 
 *******************************************************
 * 7) Fiscal mechanism section (2001Q1–2023Q4)
