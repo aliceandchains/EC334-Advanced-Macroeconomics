@@ -5,7 +5,7 @@
 clear all
 set more off
 
-import delimited "alldata.csv", clear varnames(1)
+import delimited "Final Data.csv", clear varnames(1)
 
 * Time index
 cap drop tq
@@ -313,7 +313,7 @@ local lsize small
 local nsize vsmall
 local WPNG  3200
 
-import delimited "alldata.csv", clear varnames(1)
+import delimited "Final Data.csv", clear varnames(1)
 
 cap drop tq
 gen tq = yq(year, quarter)
@@ -510,7 +510,7 @@ graph export "fig_sw_pc_clean_3subs_2019q4.png", replace width(3200)
 clear all
 set more off
 
-import delimited "alldata.csv", clear varnames(1)
+import delimited "Final Data.csv", clear varnames(1)
 
 cap drop tq
 gen tq = yq(year, quarter)
@@ -611,6 +611,39 @@ graph export "fig_cf_exp_fixed.png", replace width(3200)
 twoway (line pi_pce tq if ok_pc, lcolor(midblue) lwidth(medthick)) (line pi_hat_full tq if ok_pc, lcolor(cranberry) lwidth(medthick)) (line pi_hat_oilfixed tq if ok_pc, lcolor(cranberry) lpattern(dash) lwidth(medthick)), xline(`=tq2020q1', lpattern(dash) lcolor(gs10)) ytitle("`yttl'") xtitle("") xlabel(`xlbl', format(`xfmt')) legend(order(1 "Actual inflation" 2 "Predicted (full PC)" 3 "Oil fixed") cols(1)) graphregion(color(white)) plotregion(color(white))
 
 graph export "fig_cf_oil_fixed.png", replace width(3200)
+
+
+
+
+
+
+
+
+
+
+*******************************************************
+* Fiscal impulse: RDPI gap (real DPI per capita vs pre-2020 trend)
+* INPUT: rdpi_pc_real = BEA Table 2.1 line 39 (per capita, chained 2017$)
+*******************************************************
+
+* Replace rdpi_pc_real with your actual column name
+cap drop l_rdpi t_index rdpi_trend rdpi_gap
+gen l_rdpi = ln(rdpi_pc_real)
+label var l_rdpi "Log real DPI per capita"
+
+gen t_index = _n
+
+scalar tq2019q4 = yq(2019,4)
+
+quietly reg l_rdpi t_index if tq>=tq1984q1 & tq<=tq2019q4, robust
+predict rdpi_trend, xb
+gen rdpi_gap = l_rdpi - rdpi_trend
+label var rdpi_gap "Fiscal impulse: log real DPIpc minus pre-2020 trend"
+
+* Sanity plot: should spike in 2020-21 and mean-revert
+twoway (line rdpi_gap tq if tq>=tq1984q1, lwidth(medthick) lcolor(black)), xline(`=yq(2020,1)', lpattern(dash) lcolor(gs10)) ytitle("Log deviation from pre-2020 trend") xtitle("") graphregion(color(white)) plotregion(color(white)) name(fig_fiscal_gap, replace)
+
+graph export "fig_fiscal_gap.pdf", replace
 
 
 
