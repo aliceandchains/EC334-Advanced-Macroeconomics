@@ -1,4 +1,3 @@
-```stata
 *******************************************************
 * EC334 Dissertation — Production Master Do-file (NO ///)
 * One import, no redundancies, final section = fiscal
@@ -189,41 +188,29 @@ if _rc ssc install estout
 esttab m1_pce_mich m2_pce_spf m3_cpi_mich m4_cpi_spf using "tab_baseline_pc_robust.tex", replace se b(%9.3f) se(%9.3f) star(* 0.10 ** 0.05 *** 0.01) label stats(N r2, labels("Observations" "R-squared")) compress
 
 *******************************************************
-* 5) FEVD (VAR): inflation, expectations, slack, supply
+* 5) FEVD (VAR) with 95% CIs, cleaned titles/notes
 *******************************************************
 
 cap drop ok_var
 gen ok_var = (tq>=tq1984q1 & tq<=tq2023q4) & !missing(pi_pce, michigan_1y_median, u_gap, d_oil)
 
 var pi_pce michigan_1y_median u_gap d_oil if ok_var, lags(1/4)
+
 irf set irf_pc_var, replace
 irf create base, step(16) replace order(d_oil michigan_1y_median u_gap pi_pce)
 
-local TWBASE graphregion(color(white)) plotregion(color(white)) legend(off) ylabel(0(.02).10, angle(horizontal) labsize(`lsize') nogrid) xlabel(0(4)16, labsize(`lsize')) xtitle("Horizon (quarters)", size(`lsize')) ytitle("Share of FE variance", size(`lsize')) note("VAR(4), sample 1984Q1–2023Q4. Cholesky order: oil, exp, u_gap, inflation.", size(`nsize'))
+* 1) Oil -> inflation FEVD (with 95% CI)
+irf graph fevd, irf(base) impulse(d_oil) response(pi_pce) level(95) legend(off) graphregion(color(white)) plotregion(color(white)) ytitle("Share of FE variance", size(`lsize')) xtitle("Horizon (quarters)", size(`lsize')) xlabel(0(4)16, labsize(`lsize')) ylabel(, labsize(`lsize') glcolor(gs16) glwidth(vthin)) title("FEVD of headline PCE inflation: oil", size(`tsize')) subtitle("") note("") caption("") name(fig_fevd_oil, replace)
+graph export "fig_fevd_oil_pi_pce.png", replace width(`WPNG')
 
-cap program drop fevd_make
-program define fevd_make
-    args impulsevar respvar outname col
-    preserve
-    tempname M
-    quietly irf table fevd, impulse(`impulsevar') response(`respvar')
-    matrix `M' = r(table)
-    clear
-    svmat double `M', names(col)
-    gen h = _n-1
-    ds, has(type numeric)
-    local numvars `r(varlist)'
-    local first : word 1 of `numvars'
-    gen share = `first'
-    keep h share
-    twoway line share h, lcolor(`col') lwidth(medthick) `TWBASE' title("FEVD of headline PCE inflation: `outname'", size(`tsize'))
-    graph export "fig_fevd_`outname'_pi_pce.png", replace width(`WPNG')
-    restore
-end
+* 2) Expectations -> inflation FEVD (with 95% CI)
+irf graph fevd, irf(base) impulse(michigan_1y_median) response(pi_pce) level(95) legend(off) graphregion(color(white)) plotregion(color(white)) ytitle("Share of FE variance", size(`lsize')) xtitle("Horizon (quarters)", size(`lsize')) xlabel(0(4)16, labsize(`lsize')) ylabel(, labsize(`lsize') glcolor(gs16) glwidth(vthin)) title("FEVD of headline PCE inflation: expectations", size(`tsize')) subtitle("") note("") caption("") name(fig_fevd_exp, replace)
+graph export "fig_fevd_expectations_pi_pce.png", replace width(`WPNG')
 
-fevd_make d_oil pi_pce supply_oil blue
-fevd_make michigan_1y_median pi_pce expectations red
-fevd_make u_gap pi_pce ugap black
+* 3) Slack (u_gap) -> inflation FEVD (with 95% CI)
+irf graph fevd, irf(base) impulse(u_gap) response(pi_pce) level(95) legend(off) graphregion(color(white)) plotregion(color(white)) ytitle("Share of FE variance", size(`lsize')) xtitle("Horizon (quarters)", size(`lsize')) xlabel(0(4)16, labsize(`lsize')) ylabel(, labsize(`lsize') glcolor(gs16) glwidth(vthin)) title("FEVD of headline PCE inflation: unemployment gap", size(`tsize')) subtitle("") note("") caption("") name(fig_fevd_ugap, replace)
+graph export "fig_fevd_ugap_pi_pce.png", replace width(`WPNG')
+
 
 *******************************************************
 * 6) Stock–Watson accelerationist PC (three subsamples)
