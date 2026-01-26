@@ -1,6 +1,5 @@
 *******************************************************
-* EC334 Dissertation — Production Master Do-file (NO ///)
-* One import, no redundancies, final section = fiscal
+* EC334 Dissertation
 *******************************************************
 
 clear all
@@ -40,7 +39,7 @@ scalar tq2023q4 = yq(2023,4)
 scalar tq2024q4 = yq(2024,4)
 
 *******************************************************
-* 2) Construct variables (once)
+* 2) Construct variables
 *******************************************************
 
 * Inflation (annualised q/q)
@@ -255,6 +254,70 @@ if _rc ssc install estout
 
 esttab r1_pce_mich_oil r2_pce_spf_oil r3_cpi_mich_oil r4_cpi_spf_oil using "tab_pc_robust_oil.tex", replace cells("b(fmt(3)) se(fmt(3) par) p(fmt(3))") star(* 0.10 ** 0.05 *** 0.01) label compress stats(N r2, labels("Observations" "R-squared")) mtitles("PCE×Mich+oil" "PCE×SPF+oil" "CPI×Mich+oil" "CPI×SPF+oil")
 
+
+
+* Robustness check: Swap 10-year expectations (2 separate figures)
+* (e) PCE × Swap10y
+* (f) CPI × Swap10y
+
+cap program drop _coefpos
+program define _coefpos, rclass
+    syntax varname [if]
+    quietly summarize `varlist' `if', meanonly
+    return scalar ytxt = r(max) - 0.08*(r(max)-r(min))
+end
+
+local xlbl_list `=tq1984q1'(40)`=tq2024q4'
+local xfmt %tqCCYY!Qq
+scalar tq_text = yq(1996,1)
+
+* -----------------------------
+* (e) PCE × Swap 10-year
+* -----------------------------
+cap drop ok_swap_pce pi_hat_swap_pce pi_fit_swap_pce pi_fc_swap_pce
+gen ok_swap_pce = !missing(pi_pce, swap_10year, u_gap) & tq>=tq1984q1
+
+reg pi_pce swap_10year u_gap if train_pc & ok_swap_pce, robust
+est store m_pce_swap10
+
+local bswap_pce : display %5.2f _b[swap_10year]
+local gswap_pce : display %5.2f _b[u_gap]
+
+predict pi_hat_swap_pce if ok_swap_pce, xb
+gen pi_fit_swap_pce = pi_hat_swap_pce if train_pc & ok_swap_pce
+gen pi_fc_swap_pce  = pi_hat_swap_pce if test_pc  & ok_swap_pce
+
+_coefpos pi_pce if ok_swap_pce
+scalar ytxt_swap_pce = r(ytxt)
+
+twoway (line pi_pce tq if ok_swap_pce, lcolor(midblue) lwidth(medthick)) (line pi_fit_swap_pce tq if !missing(pi_fit_swap_pce), lcolor(cranberry) lwidth(medthick)) (line pi_fc_swap_pce tq if !missing(pi_fc_swap_pce), lcolor(cranberry) lpattern(dash) lwidth(medthick)), xline(`=tq2020q3', lpattern(dash) lcolor(black) lwidth(thin)) title("(e) PCE × Swap 10y", size(`lsize')) text(`=ytxt_swap_pce' `=tq_text' "{it:β}=`bswap_pce'   {it:γ}=`gswap_pce'", size(`lsize') placement(ne)) ytitle("Annualised quarterly inflation (pp)", size(`lsize')) xtitle("") xlabel(`xlbl_list', format(`xfmt') labsize(`lsize')) ylabel(, labsize(`lsize') glcolor(gs16) glwidth(vthin)) legend(off) graphregion(color(white)) plotregion(color(white)) name(fig_pce_swap10, replace)
+
+graph export "fig_pc_pce_swap10.pdf", replace
+graph export "fig_pc_pce_swap10.png", replace width(`WPNG')
+
+* -----------------------------
+* (f) CPI × Swap 10-year
+* -----------------------------
+cap drop ok_swap_cpi pi_hat_swap_cpi pi_fit_swap_cpi pi_fc_swap_cpi
+gen ok_swap_cpi = !missing(pi_cpi, swap_10year, u_gap) & tq>=tq1984q1
+
+reg pi_cpi swap_10year u_gap if train_pc & ok_swap_cpi, robust
+est store m_cpi_swap10
+
+local bswap_cpi : display %5.2f _b[swap_10year]
+local gswap_cpi : display %5.2f _b[u_gap]
+
+predict pi_hat_swap_cpi if ok_swap_cpi, xb
+gen pi_fit_swap_cpi = pi_hat_swap_cpi if train_pc & ok_swap_cpi
+gen pi_fc_swap_cpi  = pi_hat_swap_cpi if test_pc  & ok_swap_cpi
+
+_coefpos pi_cpi if ok_swap_cpi
+scalar ytxt_swap_cpi = r(ytxt)
+
+twoway (line pi_cpi tq if ok_swap_cpi, lcolor(midblue) lwidth(medthick)) (line pi_fit_swap_cpi tq if !missing(pi_fit_swap_cpi), lcolor(cranberry) lwidth(medthick)) (line pi_fc_swap_cpi tq if !missing(pi_fc_swap_cpi), lcolor(cranberry) lpattern(dash) lwidth(medthick)), xline(`=tq2020q3', lpattern(dash) lcolor(black) lwidth(thin)) title("(f) CPI × Swap 10y", size(`lsize')) text(`=ytxt_swap_cpi' `=tq_text' "{it:β}=`bswap_cpi'   {it:γ}=`gswap_cpi'", size(`lsize') placement(ne)) ytitle("Annualised quarterly inflation (pp)", size(`lsize')) xtitle("") xlabel(`xlbl_list', format(`xfmt') labsize(`lsize')) ylabel(, labsize(`lsize') glcolor(gs16) glwidth(vthin)) legend(off) graphregion(color(white)) plotregion(color(white)) name(fig_cpi_swap10, replace)
+
+graph export "fig_pc_cpi_swap10.pdf", replace
+graph export "fig_pc_cpi_swap10.png", replace width(`WPNG')
 
 *******************************************************
 * 5) FEVD (VAR) with 95% CIs, cleaned titles/notes
