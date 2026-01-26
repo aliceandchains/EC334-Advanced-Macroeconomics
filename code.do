@@ -223,6 +223,39 @@ cap which esttab
 if _rc ssc install estout
 esttab m1_pce_mich m2_pce_spf m3_cpi_mich m4_cpi_spf using "tab_baseline_pc_robust.tex", replace se b(%9.3f) se(%9.3f) star(* 0.10 ** 0.05 *** 0.01) label stats(N r2, labels("Observations" "R-squared")) compress
 
+
+* Robustness: add oil inflation control (d_oil)
+* (aR) PCE × Michigan + oil
+cap drop ok1r
+gen ok1r = !missing(pi_pce, michigan_1y_median, u_gap, d_oil) & tq>=tq1984q1
+reg pi_pce michigan_1y_median u_gap d_oil if train_pc & ok1r, robust
+est store r1_pce_mich_oil
+
+* (bR) PCE × SPF + oil
+cap drop ok2r
+gen ok2r = !missing(pi_pce, spf_inflation_1year, u_gap, d_oil) & tq>=tq1984q1
+reg pi_pce spf_inflation_1year u_gap d_oil if train_pc & ok2r, robust
+est store r2_pce_spf_oil
+
+* (cR) CPI × Michigan + oil
+cap drop ok3r
+gen ok3r = !missing(pi_cpi, michigan_1y_median, u_gap, d_oil) & tq>=tq1984q1
+reg pi_cpi michigan_1y_median u_gap d_oil if train_pc & ok3r, robust
+est store r3_cpi_mich_oil
+
+* (dR) CPI × SPF + oil
+cap drop ok4r
+gen ok4r = !missing(pi_cpi, spf_inflation_1year, u_gap, d_oil) & tq>=tq1984q1
+reg pi_cpi spf_inflation_1year u_gap d_oil if train_pc & ok4r, robust
+est store r4_cpi_spf_oil
+
+* Export LaTeX table with b, SE, and p-values
+cap which esttab
+if _rc ssc install estout
+
+esttab r1_pce_mich_oil r2_pce_spf_oil r3_cpi_mich_oil r4_cpi_spf_oil using "tab_pc_robust_oil.tex", replace cells("b(fmt(3)) se(fmt(3) par) p(fmt(3))") star(* 0.10 ** 0.05 *** 0.01) label compress stats(N r2, labels("Observations" "R-squared")) mtitles("PCE×Mich+oil" "PCE×SPF+oil" "CPI×Mich+oil" "CPI×SPF+oil")
+
+
 *******************************************************
 * 5) FEVD (VAR) with 95% CIs, cleaned titles/notes
 *******************************************************
