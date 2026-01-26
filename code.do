@@ -321,6 +321,7 @@ graph export "fig_pc_cpi_swap10.png", replace width(`WPNG')
 
 *******************************************************
 * 5) FEVD (VAR) with 95% CIs, cleaned titles/notes
+* note - I separately used python to better present the same graphs
 *******************************************************
 
 cap drop ok_var
