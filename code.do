@@ -78,6 +78,42 @@ gen test_pc  = (tq >= tq2020q3)
 local xlbl = tq1984q1
 local xlbl2 = tq2024q4
 
+
+* Summary statistics for Phillips Curve variables
+* Inflation measures
+
+local infl_vars pi_pce pi_core_pce pi_core_cpi pi_cpi
+
+* Inflation expectations
+local exp_vars michigan_1y_median spf_inflation_1year swap_1year swap_5year swap_10year
+
+* Labour market slack
+local slack_vars u_gap l_vu
+
+* Supply-side shocks
+local shock_vars d_oil pi_import
+
+*******************************************************
+* TRAIN SAMPLE: 1984Q1–2020Q2
+*******************************************************
+
+di as text "====================================================="
+di as text "SUMMARY STATISTICS — TRAIN SAMPLE (1984Q1–2020Q2)"
+di as text "====================================================="
+
+tabstat `infl_vars' `exp_vars' `slack_vars' `shock_vars' if train_pc, statistics(n mean sd p10 p50 p90) columns(statistics) format(%9.3f)
+
+*******************************************************
+* TEST SAMPLE: 2020Q3–2023Q4
+*******************************************************
+
+di as text "====================================================="
+di as text "SUMMARY STATISTICS — TEST SAMPLE (2020Q3–2023Q4)"
+di as text "====================================================="
+
+tabstat `infl_vars' `exp_vars' `slack_vars' `shock_vars' if test_pc, statistics(n mean sd p10 p50 p90) columns(statistics) format(%9.3f)
+
+
 *******************************************************
 * 3) Baseline expectations-augmented Phillips Curve (OOS)
 *    Dep var: headline PCE inflation (pi_pce)
